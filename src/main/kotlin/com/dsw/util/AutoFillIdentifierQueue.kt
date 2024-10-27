@@ -10,7 +10,7 @@ import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
-class AutoFillIdentifierQueue(private val bucket: String,private val type: String,private val format: String,private val okHttpClient:OkHttpClient, private val config:Map<String,String>):AutoFill,IdentifierQueue<String> {
+class AutoFillIdentifierQueue(private val bucket: String,private val type: String,private val format: String,private val okHttpClient:OkHttpClient, private val config:Map<String,String>):AutoFillQueue<String> {
 
     private val concurrentQueue= ConcurrentLinkedQueue<String>()
     private val mapper=Gson()
