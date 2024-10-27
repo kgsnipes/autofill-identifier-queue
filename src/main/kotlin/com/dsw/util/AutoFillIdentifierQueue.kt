@@ -8,6 +8,7 @@ import okhttp3.Request
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 class AutoFillIdentifierQueue(private val bucket: String,private val type: String,private val format: String,private val okHttpClient:OkHttpClient, private val config:Map<String,String>):AutoFill,IdentifierQueue<String> {
 
@@ -16,10 +17,7 @@ class AutoFillIdentifierQueue(private val bucket: String,private val type: Strin
     private val isReplenishing=AtomicBoolean(false)
     private val batchSize=config["batchSize"]!!.toInt()
     private val lock=Semaphore(1)
-
-    private fun createMapKey(type: String, format: String, bucket: String): String {
-        return "${type}_${format}_${bucket}"
-    }
+    private val totalCount=AtomicInteger(0)
 
     private fun _getIdentifiersFromService(bucket: String, type: String, format: String, count: Int):IDServiceResponse
     {
@@ -52,6 +50,7 @@ class AutoFillIdentifierQueue(private val bucket: String,private val type: Strin
             if(identifiers.id.isNotEmpty())
             {
                 concurrentQueue.addAll(identifiers.id)
+                totalCount.addAndGet(count)
             }
         }
         finally {
@@ -65,7 +64,8 @@ class AutoFillIdentifierQueue(private val bucket: String,private val type: Strin
     }
 
     override fun getIdentifiers(count: Int): List<String> {
-       return if(concurrentQueue.isNotEmpty() && count<batchSize) {
+       return if(concurrentQueue.isNotEmpty() && count<totalCount.get()) {
+           totalCount.set(totalCount.get()-count)
            concurrentQueue.take(count).toList()
        }
        else {
