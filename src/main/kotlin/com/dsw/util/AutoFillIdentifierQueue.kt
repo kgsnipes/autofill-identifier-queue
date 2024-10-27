@@ -1,7 +1,7 @@
 package com.dsw.util
 
 import com.dsw.util.dto.IDServiceResponse
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.google.gson.Gson
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -12,8 +12,8 @@ import java.util.concurrent.atomic.AtomicInteger
 
 class AutoFillIdentifierQueue(private val bucket: String,private val type: String,private val format: String,private val okHttpClient:OkHttpClient, private val config:Map<String,String>):AutoFill,IdentifierQueue<String> {
 
-    private val concurrentQueue=ConcurrentLinkedQueue<String>()
-    private val mapper=ObjectMapper()
+    private val concurrentQueue= ConcurrentLinkedQueue<String>()
+    private val mapper=Gson()
     private val isReplenishing=AtomicBoolean(false)
     private val batchSize=config["batchSize"]!!.toInt()
     private val lock=Semaphore(1)
@@ -21,10 +21,10 @@ class AutoFillIdentifierQueue(private val bucket: String,private val type: Strin
 
     private fun _getIdentifiersFromService(bucket: String, type: String, format: String, count: Int):IDServiceResponse
     {
-        var configUrl=config["url"]!!.also {
-            if(!it.endsWith("/")) "${it}/"
+        val url=config["host"]!!.let {
+            "${config["scheme"]?:"http"}://${it.lowercase()}/id-service/${type.lowercase()}/$bucket"
         }
-        var url="${configUrl}$bucket"
+
         val httpBuilder = url.toHttpUrl().newBuilder().addQueryParameter("count","$count").addQueryParameter("format",format)
         val request = Request.Builder().get()
             .url(httpBuilder.build())
@@ -34,7 +34,7 @@ class AutoFillIdentifierQueue(private val bucket: String,private val type: Strin
             if (!response.isSuccessful)
                 IDServiceResponse(id= emptyList())
             else
-                mapper.readValue(response.body!!.string(), IDServiceResponse::class.java)
+                mapper.fromJson(response.body!!.string(), IDServiceResponse::class.java)
         }
     }
 
@@ -49,8 +49,11 @@ class AutoFillIdentifierQueue(private val bucket: String,private val type: Strin
             val identifiers= _getIdentifiersFromService(bucket,type, format, count)
             if(identifiers.id.isNotEmpty())
             {
-                concurrentQueue.addAll(identifiers.id)
-                totalCount.addAndGet(count)
+                identifiers.id.forEach {
+                    concurrentQueue.offer(it)
+                    totalCount.addAndGet(1)
+                }
+
             }
         }
         finally {
@@ -65,19 +68,33 @@ class AutoFillIdentifierQueue(private val bucket: String,private val type: Strin
 
     override fun getIdentifiers(count: Int): List<String> {
        return if(concurrentQueue.isNotEmpty() && count<totalCount.get()) {
-           totalCount.set(totalCount.get()-count)
-           concurrentQueue.take(count).toList()
+           val mutableList= mutableListOf<String>()
+           for(i in 0..count)
+           {
+               totalCount.decrementAndGet()
+               mutableList.add(concurrentQueue.poll())
+           }
+           mutableList
        }
        else {
            if(count<batchSize)
             {
                 replenish()
+                totalCount.set(totalCount.get()-batchSize)
             }
             else
             {
                 replenish(count)
+                totalCount.set(totalCount.get()-count)
             }
-           concurrentQueue.take(count).toList()
+
+           val mutableList= mutableListOf<String>()
+           for(i in 1..count)
+           {
+               totalCount.decrementAndGet()
+               mutableList.add(concurrentQueue.poll())
+           }
+           mutableList
        }
     }
 }
